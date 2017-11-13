@@ -47,16 +47,16 @@ class BOW(nn.Module):
         dtype = torch.FloatTensor  # enable CUDA here if you like
 
         self.embeddings = nn.Embedding(vocab_size, embedding_dim)
-        # self.bias = None  ### YOUR CODE HERE ###
-        # raise NotImplementedError("TODO add parameters")
-        self.bias = Variable(torch.randn(ntags).type(dtype), requires_grad=True)
 
+        ### YOUR CODE HERE ###
+        self.bias = Variable(torch.randn(embedding_dim).type(dtype), requires_grad=True)          
+    
     def forward(self, inputs):
         embeds = self.embeddings(inputs)
-        logits = torch.sum(embeds, 1)
+        
         ### YOUR CODE HERE ###
-        logits = logits+self.bias
-        # raise NotImplementedError("TODO add bias")
+        logits = torch.sum(embeds, 1)+self.bias
+        
         return logits
 
 
@@ -88,26 +88,27 @@ for ITER in range(100):
     start = time.time()
 
     for words, tag in train:
+        print(words,tag)
 
         # forward pass
-        lookup_tensor = Variable(torch.LongTensor([words]))
-        scores = model(lookup_tensor)
-        loss = nn.CrossEntropyLoss()
-        target = Variable(torch.LongTensor([tag]))
-        output = loss(scores, target)
-        train_loss += output.data[0]
+    #     lookup_tensor = Variable(torch.LongTensor([words]))
+    #     scores = model(lookup_tensor)
+    #     loss = nn.CrossEntropyLoss()
+    #     target = Variable(torch.LongTensor([tag]))
+    #     output = loss(scores, target)
+    #     train_loss += output.data[0]
 
-        # backward pass
-        model.zero_grad()
-        output.backward()
+    #     # backward pass
+    #     model.zero_grad()
+    #     output.backward()
 
-        # update weights
-        optimizer.step()
+    #     # update weights
+    #     optimizer.step()
 
-    print("iter %r: train loss/sent=%.4f, time=%.2fs" % 
-          (ITER, train_loss/len(train), time.time()-start))
+    # print("iter %r: train loss/sent=%.4f, time=%.2fs" % 
+    #       (ITER, train_loss/len(train), time.time()-start))
 
-    # evaluate
-    _, _, acc = evaluate(model, dev)
-    print("iter %r: test acc=%.4f" % (ITER, acc))
+    # # evaluate
+    # _, _, acc = evaluate(model, dev)
+    # print("iter %r: test acc=%.4f" % (ITER, acc))
 
