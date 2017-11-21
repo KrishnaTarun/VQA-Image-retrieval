@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import random
 import time
+import matplotlib.pyplot as plt
 
 # Functions to read in the corpus
 w2i = defaultdict(lambda: len(w2i))
@@ -36,7 +37,6 @@ def get_args():
 
     # Array for all arguments passed to script
     args = parser.parse_args()
-    # print(args)
     return args
 
 
@@ -89,7 +89,6 @@ train = list(read_dataset('train'))
 w2i = defaultdict(lambda: UNK, w2i)
 val = list(read_dataset('val'))
 nwords = len(w2i)
-print(nwords)
 
 
 
@@ -118,11 +117,9 @@ class DeepCBOW(nn.Module):
           else:
               input_matrix = torch.cat((input_matrix, h_), 0)
 
-      print(input_matrix.size())          
       #---------------------------------                  
       h = F.tanh(self.linear1(input_matrix))
       store = self.linear2(h).transpose(0, 1)
-      print(store)
       #---------------------------------
           
       return store
@@ -152,16 +149,15 @@ def get_tensor(x):
 
 
 optimizer = optim.Adam(model.parameters(), lr=0.001)
+loss_train = []
 print("training")
 for ITER in range(20):
-    print(ITER)
 
     random.shuffle(train)
     train_loss = 0.0
     start = time.time()
     count = 0
     for words, img_list, target_ind, img_id in train:
-        print(ITER,count)
         # forward pass
         scores = model(get_tensor([words]), img_list)
 
@@ -179,9 +175,14 @@ for ITER in range(20):
         count+=1
 
     print("iter %r: train loss/sent=%.4f, time=%.2fs" %
-      (ITER, train_loss/len(train), time.time()-start))
+      (ITER+1, train_loss/len(train), time.time()-start))
         # start = time.time()
 
+    loss_train.append(train_loss/len(train))
+
 # evaluate
-    _, _, acc = evaluate(model, dev)
-    print("iter %r: test acc=%.4f" % (ITER, acc))
+    #_, _, acc = evaluate(model, dev)
+    #print("iter %r: test acc=%.4f" % (ITER, acc))
+
+plt.plot(range(len(loss_train)), loss_train)
+plt.show()
