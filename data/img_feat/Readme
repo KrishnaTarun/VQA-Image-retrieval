@@ -1,0 +1,19 @@
+
+IR_image_features.h5 - contains the ResNet image features for all the images(train, val, test) as an array
+IR_img_features2id.json - contains the mapping from image_id to index in the .h5 file
+
+WARNING: Always convert the loaded data from .h5 file to numpy array. This is done because if you are using multiple threads to read the data from .h5 file sometimes it picks up data from the incorrect index.
+
+Sample Code to access the image features
+
+import h5py
+import json
+import numpy as np
+
+img_features = np.asarray(h5py.File(path_to_h5_file, 'r')['img_features'])
+
+with open('path_to_json_file', 'r') as f:
+     visual_feat_mapping = json.load(f)['IR_imgid2id']
+
+h5_id = visual_feat_mapping[str(img_id)]
+img_feat = img_features[h5_id]
