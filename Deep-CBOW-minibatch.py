@@ -20,7 +20,8 @@ UNK = w2i["<unk>"]
 PAD = w2i["<pad>"]
 
 # One data point
-Example = namedtuple("Example", ["word", "img_list","img_ind", "img_id"])
+Example = namedtuple("Example", ["word", "img_list", "img_ind", "img_id"])
+
 
 
 def get_args():
@@ -38,6 +39,10 @@ def get_args():
         '--type', type=str, help='Easy or Hard', default="Easy")
     parser.add_argument(
         '--img_feat', help='folder to image features', default="data/img_feat")
+    parser.add_argument(
+        '--lr_type', help='same or diff', default="same")
+    parser.add_argument(
+        '--lr_rate', type=float, help='initial learning rate', default=0.001)
 
     # Array for all arguments passed to script
     args = parser.parse_args()
@@ -47,12 +52,13 @@ def get_args():
 
 def read_dataset(process):
 
-   
+   global com_types
    #data file path
    fld_path = os.path.join(args.path_folder,args.type)
    filename = 'IR_'+process+'_'+args.type.lower()
 
    print(filename)
+   print(os.path.join(fld_path,filename+'.json'))
 
     #data 
    with open(os.path.join(fld_path,filename+'.json')) as json_data:
@@ -61,26 +67,29 @@ def read_dataset(process):
    for key, val in data.items():
         word_d, word_c, img_list, target_ind, img_id   = val['dialog'], val['caption'], val['img_list'], val['target'], val['target_img_id']
         stack_d=[]
-        if len(img_list)==10:
+        if len(img_list) == 10:
             for i, sen in enumerate(word_d):
                 sen = sen[0].lower().strip().split(" ")
                 stack_d += sen
             word_c = word_c.lower().strip().split(" ")
             if args.dialog:
                 
+                com_types = "dialog"
                 yield Example(word=[w2i[x] for x in stack_d],img_list=img_list, img_ind = target_ind, img_id =img_id)
-
             if args.caption:
                 
+                com_types = "caption"
                 yield Example(word=[w2i[x] for x in word_c],img_list=img_list, img_ind = target_ind, img_id =img_id)
-            
+
             if args.combine:
                
                word = stack_d+word_c
+               com_types = "combine"
                yield Example(word=[w2i[x] for x in word],img_list=img_list, img_ind = target_ind, img_id =img_id)
 
 
 
+com_types = "."
 args = get_args()
    
 #Loading img_features
@@ -98,6 +107,7 @@ w2i = defaultdict(lambda: UNK, w2i)
 val = list(read_dataset('val'))
 nwords = len(w2i)
 print(nwords)
+print(com_types)
 
 
 
@@ -118,7 +128,7 @@ class DeepCBOW(nn.Module):
 
       emb_feat = torch.cat((embeds,img_feat),2)
       #---------------------------------                  
-      h = F.tanh(self.linear1(emb_feat))
+      h = F.relu(self.linear1(emb_feat))
       h = self.linear2(h)
       # ---------------------------------
          
@@ -126,6 +136,17 @@ class DeepCBOW(nn.Module):
 
 
 model = DeepCBOW(nwords, 300, 2048, 64, 1)
+# print(model)
+# print(model.embeddings.parameters())
+
+if args.lr_type =="same":
+  lr_ = args.lr_rate
+  optimizer = optim.Adam(model.parameters(), lr=lr_)
+
+else:
+  lr_ = args.lr_rate
+  optimizer = optim.Adam([{'params': model.embeddings.parameters(),'lr': lr_*10},{'params':model.linear1.parameters()},{'params':model.linear2.parameters()}], lr=lr_)
+
 
 
 def minibatch(data, batch_size=32):
@@ -159,62 +180,108 @@ def preprocess(batch):
 def evaluate(model, data):
     """Evaluate a model on a data set."""
     correct = 0.0
+    val_loss = 0.0
+    updates = 0
+    correct_k = 0
 
     for batch in minibatch(data):
+
+          updates+=1
           
           # pad data with zeros
           seqs, img_feat, target_ind = preprocess(batch)
 
           # forward pass
           scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
+          
+          #calculating loss for validation set
           scores = scores[:,:,0]
-        
-          _, predictions = torch.max(scores.data, 1)
+          loss = nn.CrossEntropyLoss()
           targets = get_tensor([target_ind])
+          output = loss(scores, targets[0])
+          val_loss += output.data[0]
 
+
+          
+          #Top_1 predicitons
+          _, predictions = torch.max(scores.data, 1)
           correct += torch.eq(predictions, targets[0]).sum().data[0]
 
-    return correct, len(data), correct/len(data)
+          #Top_5 predictions
+          scores_5, predictions_5 = torch.topk(scores,5,1,largest=True)
+          target = targets[0].view(-1,1).expand_as(predictions_5)
+          correct_k+= predictions_5.eq(target).float().sum().data[0]
+
+          # print(predictions_5.eq(targets[0].view(-1,1).expand_as(predictions_5)).sum(0,keepdim=True))
+
+    return correct, correct_k, len(data), correct/len(data), correct_k/len(data), val_loss/updates
 
 def get_tensor(x):
     """Get a Variable given indices x"""
     return Variable(torch.LongTensor(x))
 
 
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+best_val_loss = None
+#model_file_name
+model_file = str(args.type)+"_"+str(args.lr_type)+"_"+com_types+".pt"
 
-for ITER in range(20):
 
-    random.shuffle(train)
-    train_loss = 0.0
-    start = time.time()
-    count = 0
-    updates = 0
-    for batch in minibatch(train):
-     
-        updates += 1
+# At any point you can hit Ctrl + C to break out of training early.
+try:
 
-        # pad data with zeros
-        seqs, img_feat, target_ind = preprocess(batch)
+    for ITER in range(10):
 
-        scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
+        random.shuffle(train)
+        train_loss = 0.0
+        start = time.time()
+        count = 0
+        updates = 0
+        for batch in minibatch(train[0:10000]):
+         
+            updates += 1
 
-        loss = nn.CrossEntropyLoss()
-        targets = get_tensor([target_ind])
-        output = loss(scores[:,:,0], targets[0])
-        train_loss += output.data[0]
+            # pad data with zeros
+            seqs, img_feat, target_ind = preprocess(batch)
 
-        # backward pass
-        model.zero_grad()
-        output.backward()
+            scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
 
-        # update weights
-        optimizer.step()
-        count+=1
+            loss = nn.CrossEntropyLoss()
+            targets = get_tensor([target_ind])
+            output = loss(scores[:,:,0], targets[0])
+            # print(output)
+            train_loss += output.data[0]
 
-    print("iter %r: avg train loss=%.4f, time=%.2fs" %
-          (ITER, train_loss/updates, time.time()-start))
 
-# evaluate
-    _, _, acc = evaluate(model, val)
-    print("iter %r: val acc=%.4f" % (ITER, acc))
+            # backward pass
+            model.zero_grad()
+            output.backward()
+
+            # update weights
+            optimizer.step()
+            count+=1
+
+        print("iter %r: avg train loss=%.4f, time=%.2fs" %
+              (ITER, train_loss/updates, time.time()-start))
+
+    # evaluate val
+        _, _, _, acc_1, acc_k, val_loss = evaluate(model, val)
+        print("iter %r: val top_1 acc=%.4f val top_5 acc=%.4f val_loss=%.4f" % (ITER, acc_1, acc_k, val_loss))
+        if not best_val_loss or val_loss < best_val_loss:
+              best_val_loss = val_loss
+              with open(model_file, 'wb') as f:
+                    torch.save(model, f)
+except KeyboardInterrupt:
+      print('-' * 89)
+      print('Exiting from training early')
+
+
+# Load the best saved model.
+with open(model_file, 'rb') as f:
+    model = torch.load(f)
+test = list(read_dataset('test'))
+
+# Run on test data.
+test_loss = evaluate(model, test)
+print('=' * 89)
+_, _, _, acc_1, acc_k, test_loss = evaluate(model, test)
+print("test top_1 acc=%.4f test top_5 acc=%.4f test_loss=%.4f" % (acc_1, acc_k, test_loss))
