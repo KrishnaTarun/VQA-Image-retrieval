@@ -38,8 +38,8 @@ class DeepCBOW(nn.Module):
 
       #---------------------------------                  
       h = F.tanh(self.linear1(input_matrix))
-      store = self.linear2(h).transpose(0, 1)
+      score = self.linear2(h).transpose(0, 1)
       #---------------------------------
 
-      return store
+      return score
 

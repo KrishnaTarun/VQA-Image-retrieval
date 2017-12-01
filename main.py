@@ -1,4 +1,6 @@
 #main python file
+import torch
+import random
 from collections import defaultdict
 
 from dataset import *
@@ -7,6 +9,9 @@ from train import training
 from validation import validation
 from model import get_model
 from util import plot_graph
+
+torch.manual_seed(1)
+random.seed(1)
 
 #get arguments provided by the user or default arguments
 args = get_args()
