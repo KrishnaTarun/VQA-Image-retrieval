@@ -17,6 +17,8 @@ def get_args():
         '--img_feat', help='folder to image features', default="data/img_feat")
     parser.add_argument(
         '--model_type', help='simple / vectorized / minibatch', default="simple")
+    parser.add_argument(
+        '--epochs', help='Number of epochs or training iterations', default=10)
 
     # Array for all arguments passed to script
     args = parser.parse_args()

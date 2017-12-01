@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataset import *
 from options import get_args
 from train import training
+from validation import validation
 from model import get_model
 from util import plot_graph
 
@@ -22,5 +23,15 @@ nwords = len(w2i)
 model = get_model(args.model_type, nwords)
 
 #start the training
-train_loss = training(model, train)
-plot_graph(train_loss)
+train_loss = []
+eval_loss = []
+
+print("Starting the training for %d epochs" %(args.epochs))
+for ITER in range(args.epochs):
+    tLoss = training(model, train)
+    vLoss = validation(model, val)
+    print("Epoch:%d, train loss: %.4f, validation loss:%.4f"%(ITER+1, tLoss, vLoss))
+    train_loss.append(tLoss)
+    eval_loss.append(vLoss)
+
+plot_graph(train_loss, eval_loss)
