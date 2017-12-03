@@ -14,6 +14,14 @@ import random
 import time
 from collections import namedtuple
 
+
+# ----------------------
+#Add CUDA 
+# ---------------------
+CUDA = torch.cuda.is_available()
+print("CUDA: %s" % CUDA)
+# ------------------------
+
 # create a folder to store results for particular method
 fld = "Sequence"
 if not os.path.isdir(fld):
@@ -156,6 +164,8 @@ class DeepSeq(nn.Module):
 
 
 model = DeepSeq(nwords, 300, 2048, 32, 100, 1, 1)
+if CUDA:
+    model.cuda()
 
 if args.lr_type =="single":
   lr_ = args.lr_rate
@@ -187,10 +197,14 @@ def preprocess(batch):
     max_length = max(map(len, seqs))
     seqs = [seq + [PAD] * (max_length - len(seq)) for seq in seqs]
 
-
+    # --------------------------------------------
+    # Load Image Features
+    # --------------------------------------------
     img_feat = [get_img_feat(example.img_list) for example in batch]
-    img_feat = np.array(img_feat)
-
+    img_feat = np.array(img_feat,dtype=np.float64)
+    img_feat = torch.cuda.FloatTensor(img_feat) if CUDA else torch.FloatTensor(img_feat)
+    # -----------------------------------------------------------------------
+    
     tags = [example.img_ind for example in batch]
 
     return seqs, img_feat, tags
@@ -204,13 +218,14 @@ def evaluate(model, data):
 
     for batch in minibatch(data):
 
+
           updates+=1
           
           # pad data with zeros
           seqs, img_feat, target_ind = preprocess(batch)
 
           # forward pass
-          scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
+          scores = model(get_tensor([seqs])[0], Variable(img_feat))
           
           #calculating loss for validation set
           scores = scores[:,:,0]
@@ -236,7 +251,8 @@ def evaluate(model, data):
 
 def get_tensor(x):
     """Get a Variable given indices x"""
-    return Variable(torch.LongTensor(x))
+    tensor =  torch.cuda.LongTensor(x) if CUDA else torch.LongTensor(x)
+    return Variable(tensor)
 
 
 best_val_loss = None
@@ -259,7 +275,7 @@ try:
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 20
+    n_epochs = 40
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
 
@@ -268,14 +284,14 @@ try:
         start = time.time()
         count = 0
         updates = 0
-        for batch in minibatch(train[0:10000]):
-         
+        for batch in minibatch(train):
+                    
             updates += 1
 
             # pad data with zeros
             seqs, img_feat, target_ind = preprocess(batch)
 
-            scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
+            scores = model(get_tensor([seqs])[0], Variable(img_feat))
            
 
             loss = nn.CrossEntropyLoss()

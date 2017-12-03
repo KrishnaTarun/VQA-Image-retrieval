@@ -14,6 +14,18 @@ import random
 import time
 from collections import namedtuple
 
+# ----------------------
+#Add CUDA 
+# ---------------------
+CUDA = torch.cuda.is_available()
+print("CUDA: %s" % CUDA)
+# ------------------------
+
+# create a folder to store results for particular method
+fld = "CBOW"
+if not os.path.isdir(fld):
+  os.makedirs(fld)
+
 # Functions to read in the corpus
 w2i = defaultdict(lambda: len(w2i))
 UNK = w2i["<unk>"]
@@ -40,7 +52,7 @@ def get_args():
     parser.add_argument(
         '--img_feat', help='folder to image features', default="data/img_feat")
     parser.add_argument(
-        '--lr_type', help='same or diff', default="same")
+        '--lr_type', help='same or dif', default="single")
     parser.add_argument(
         '--lr_rate', type=float, help='initial learning rate', default=0.001)
 
@@ -136,8 +148,8 @@ class DeepCBOW(nn.Module):
 
 
 model = DeepCBOW(nwords, 300, 2048, 64, 1)
-# print(model)
-# print(model.embeddings.parameters())
+if CUDA:
+  model.cuda()
 
 if args.lr_type =="same":
   lr_ = args.lr_rate
@@ -169,10 +181,14 @@ def preprocess(batch):
     max_length = max(map(len, seqs))
     seqs = [seq + [PAD] * (max_length - len(seq)) for seq in seqs]
 
-
+    # --------------------------------------------
+    # Load Image Features
+    # --------------------------------------------
     img_feat = [get_img_feat(example.img_list) for example in batch]
-    img_feat = np.array(img_feat)
-
+    img_feat = np.array(img_feat,dtype=np.float64)
+    img_feat = torch.cuda.FloatTensor(img_feat) if CUDA else torch.FloatTensor(img_feat)
+    # -----------------------------------------------------------------------
+    
     tags = [example.img_ind for example in batch]
 
     return seqs, img_feat, tags
@@ -192,7 +208,7 @@ def evaluate(model, data):
           seqs, img_feat, target_ind = preprocess(batch)
 
           # forward pass
-          scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
+          scores = model(get_tensor([seqs])[0], Variable(img_feat))
           
           #calculating loss for validation set
           scores = scores[:,:,0]
@@ -218,18 +234,30 @@ def evaluate(model, data):
 
 def get_tensor(x):
     """Get a Variable given indices x"""
-    return Variable(torch.LongTensor(x))
+    tensor =  torch.cuda.LongTensor(x) if CUDA else torch.LongTensor(x)
+    return Variable(tensor)
 
 
 best_val_loss = None
+# ---------------------------------
 #model_file_name
-model_file = str(args.type)+"_"+str(args.lr_type)+"_"+com_types+".pt"
+# ----------------------------------
+name_ = str(args.type)+"_"+str(args.lr_type)+"_"+com_types
+model_file = name_+".pt"
+# ----------------------------------
+
 
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:
-
-    for ITER in range(10):
+# ---------------------------------------------
+  #To store evaluation
+  # ---------------------------------------------
+    metric_ = defaultdict(list)
+    metric_["folder"] = fld
+    n_epochs = 40
+    metric_['n_epochs'].append(n_epochs)
+    for ITER in range(n_epochs ):
 
         random.shuffle(train)
         train_loss = 0.0
@@ -243,7 +271,7 @@ try:
             # pad data with zeros
             seqs, img_feat, target_ind = preprocess(batch)
 
-            scores = model(get_tensor([seqs])[0], Variable(torch.FloatTensor(img_feat)))
+            scores = model(get_tensor([seqs])[0], Variable(img_feat))
 
             loss = nn.CrossEntropyLoss()
             targets = get_tensor([target_ind])
@@ -262,13 +290,23 @@ try:
 
         print("iter %r: avg train loss=%.4f, time=%.2fs" %
               (ITER, train_loss/updates, time.time()-start))
+        # -------------------------------------------------------
+        metric_['train_loss'].append(train_loss/updates)
+        # -------------------------------------------------------
 
     # evaluate val
         _, _, _, acc_1, acc_k, val_loss = evaluate(model, val)
         print("iter %r: val top_1 acc=%.4f val top_5 acc=%.4f val_loss=%.4f" % (ITER, acc_1, acc_k, val_loss))
+        
+        # ------------------------------------------
+        metric_['val_loss'].append(val_loss)
+        metric_['val_top1_acc'].append(acc_1)
+        metric_['val_top5_acc'].append(acc_k)
+        # ----------------------------------
+
         if not best_val_loss or val_loss < best_val_loss:
               best_val_loss = val_loss
-              with open(model_file, 'wb') as f:
+              with open(os.path.join(fld, model_file), 'wb') as f:
                     torch.save(model, f)
 except KeyboardInterrupt:
       print('-' * 89)
@@ -276,12 +314,20 @@ except KeyboardInterrupt:
 
 
 # Load the best saved model.
-with open(model_file, 'rb') as f:
+with open(os.path.join(fld, model_file), 'rb') as f:
     model = torch.load(f)
 test = list(read_dataset('test'))
 
 # Run on test data.
 test_loss = evaluate(model, test)
 print('=' * 89)
-_, _, _, acc_1, acc_k, test_loss = evaluate(model, test)
+_, _, _, test_acc_1, test_acc_k, test_loss = evaluate(model, test)
 print("test top_1 acc=%.4f test top_5 acc=%.4f test_loss=%.4f" % (acc_1, acc_k, test_loss))
+
+metric_['test_loss'].append(test_loss)
+metric_['test_top1_acc'].append(test_acc_1)
+metric_['test_top5_acc'].append(test_acc_k)
+
+# ---------------------------------------
+with open(os.path.join(fld,'seq_'+name_+'.json'), 'w') as outfile:  
+    json.dump(metric_, outfile, indent=4)
