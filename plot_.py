@@ -4,6 +4,7 @@ import argparse
 import matplotlib.patches as mpatches
 import matplotlib.pyplot  
 import os 
+import glob
 
 
 def plt_atr(file, attr_1, attr_2, save_fld, ty_):
@@ -44,15 +45,17 @@ def plt_atr(file, attr_1, attr_2, save_fld, ty_):
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
-        '--files', type=str, help='files containing evaluation data', nargs='+',required=True)
+        '--folder', type=str, help='folder containing evaluation data',required=True)
 args = parser.parse_args()
 # -------------------------------
 # attributes for evalution
 # -------------------------------
-attr_ = {0:"folder",1:'train_loss',2:'val_loss',3:'val_top1_acc',4:'val_top5_acc',5:'n_epochs'}
+attr_ = {0:"folder", 1:'train_loss', 2:'val_loss', 3:'val_top1_acc', 4:'val_top5_acc', 5:'n_epochs'}
 # -------------------------------------
 
-for file in args.files:
+files_ = glob.glob(os.path.join(args.folder,"*.json"))
+# print(files_)
+for file in files_:
     
     with open(file) as j_file:
         data = json.load(j_file)
