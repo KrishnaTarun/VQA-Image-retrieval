@@ -154,57 +154,37 @@ class DeepSeq(nn.Module):
     super(DeepSeq, self).__init__()
     self.hidden_dim_lstm = hidden_dim_lstm
     self.embeddings = nn.Embedding(vocab_size, embed_size, padding_idx = PAD)
-    self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm,  batch_first=True)
-    # self.hidden = None
-
+    
+    self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm, dropout=0.5, batch_first=True)
     self.linear1 = nn.Linear((hidden_dim_lstm+img_feat_dim),hidden_dim_mlp)
-    self.linear2 = nn.Linear(hidden_dim_mlp,output_dim)
+    self.linear2 = nn.Linear(hidden_dim_mlp, output_dim)
 
-  # def init_hidden(self,batch):
-  #       # Before we've done anything, we dont have any hidden state.
-  #       # Refer to the Pytorch documentation to see exactly
-  #       # why they have this dimensionality.
-  #       # The axes semantics are (num_layers, minibatch_size, hidden_dim)
-  #       return (autograd.Variable(torch.randn(1, batch, self.hidden_dim_lstm).cuda()),
-  #               autograd.Variable(torch.randn(1, batch, self.hidden_dim_lstm)).cuda())
-
+  
   def forward(self, inputs, img_feat, ori_seq_len):
       #-----------------------------------------------
       embeds = self.embeddings(inputs)
 
       c0 = autograd.Variable(torch.zeros(1, embeds.size(0), self.hidden_dim_lstm)).cuda()  
       h0 = autograd.Variable(torch.zeros(1, embeds.size(0), self.hidden_dim_lstm)).cuda()
-
       out_, state_ = self.lstm(embeds, (h0, c0))
-      # hidden_state  = state_[0]
-      # print(hidden_state.size())
       
-      #--------------------------------------------------
-      #shape of hidden_state(num_layers, batch_size, hidden_dims)
-      #------------------------------------------------------------
-      
+
       hidden_state = torch.gather(out_, 1, ori_seq_len.view(-1,1,1).expand(ori_seq_len.size(0),1,self.hidden_dim_lstm)-1)
-      hidden_state = hidden_state.squeeze(1)
-      
-      # hidden_state = hidden_state[0]#get batch_size and hidden_dims
-      hidden_state = hidden_state.unsqueeze(-1)
-      hidden_state  = hidden_state.transpose(1,2)
       hidden_state  = hidden_state.repeat(1,10,1)
       hidden_state = torch.cat((hidden_state,img_feat),2)
-
       # print(hidden_state.size())
+      
       #---------------------------------    
       h = self.linear1(hidden_state)
-      # h = F.dropout(h, p = 0.5, training = self.training)
       h = F.relu(h)
       h = self.linear2(h)
       # ---------------------------------
-      
+      # print(h.size())
          
       return h  
 
 
-model = DeepSeq(nwords, 300, 2048, 64, 512, 1, 1, PAD)
+model = DeepSeq(nwords, 300, 2048, 128, 1024, 1, 1, PAD)
 print(model)
 
 if CUDA:
@@ -255,7 +235,7 @@ def evaluate(model, data):
     updates = 0
     correct_k = 0
     # print("evalution")
-    for batch in minibatch(data[0:1000], batch_size = 64):
+    for batch in minibatch(data, batch_size = 64):
 
 
           updates+=1
@@ -314,7 +294,7 @@ try:
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 50
+    n_epochs = 10
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
 
@@ -326,9 +306,9 @@ try:
         # ----------------------------
         # Update learning rate
         # ----------------------------
-        poly_lr_scheduler(optimizer, lr_, ITER, lr_decay_iter=1, max_iter=n_epochs, power=0.9)
+        # poly_lr_scheduler(optimizer, lr_, ITER, lr_decay_iter=1, max_iter=n_epochs, power=0.9)
 
-        for batch in minibatch(train[0:1000], batch_size=128):
+        for batch in minibatch(train[0:10000], batch_size=128):
             updates += 1
             
 
@@ -337,7 +317,6 @@ try:
 
           # forward pass
             scores = model(get_tensor([seqs])[0], Variable(img_feat), get_tensor(ori_seq_len))
-           
 
             loss = nn.CrossEntropyLoss()
             targets = get_tensor([target_ind])
@@ -378,26 +357,26 @@ except KeyboardInterrupt:
       print('Exiting from training early')
 
 
-# Load the best saved model.
-with open(os.path.join(fld, model_file), 'rb') as f:
-    model = torch.load(f)
+# # Load the best saved model.
+# with open(os.path.join(fld, model_file), 'rb') as f:
+#     model = torch.load(f)
 
-#----------------------------------------------------
-# Load test data for evaluation
-#---------------------------------------------------- 
-test = list(read_dataset('test',w2i))
+# #----------------------------------------------------
+# # Load test data for evaluation
+# #---------------------------------------------------- 
+# test = list(read_dataset('test',w2i))
 
-# Run on test data.
-test_loss = evaluate(model, test)
-print('=' * 89)
-_, _, _, test_acc_1, test_acc_k, test_loss = evaluate(model, test)
+# # Run on test data.
+# test_loss = evaluate(model, test)
+# print('=' * 89)
+# _, _, _, test_acc_1, test_acc_k, test_loss = evaluate(model, test)
 
-print("test top_1 acc=%.4f test top_5 acc=%.4f test_loss=%.4f" % (test_acc_1, test_acc_k, test_loss))
+# print("test top_1 acc=%.4f test top_5 acc=%.4f test_loss=%.4f" % (test_acc_1, test_acc_k, test_loss))
 
-metric_['test_loss'].append(test_loss)
-metric_['test_top1_acc'].append(test_acc_1)
-metric_['test_top5_acc'].append(test_acc_k)
+# metric_['test_loss'].append(test_loss)
+# metric_['test_top1_acc'].append(test_acc_1)
+# metric_['test_top5_acc'].append(test_acc_k)
 
-# ---------------------------------------
-with open(os.path.join(fld,name_+'.json'), 'w') as outfile:  
-    json.dump(metric_, outfile, indent=4)
+# # ---------------------------------------
+# with open(os.path.join(fld,name_+'.json'), 'w') as outfile:  
+#     json.dump(metric_, outfile, indent=4)
