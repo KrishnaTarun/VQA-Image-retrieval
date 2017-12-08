@@ -52,9 +52,7 @@ def get_args():
     parser.add_argument(
         '--img_feat', help='folder to image features', default="data/img_feat")
     parser.add_argument(
-        '--lr_type', help='same or dif', default="single")
-    parser.add_argument(
-        '--lr_rate', type=float, help='initial learning rate', default=0.001)
+        '--lr_rate', type=float, help='initial learning rate', default=0.01)
 
     # Array for all arguments passed to script
     args = parser.parse_args()
@@ -121,12 +119,29 @@ nwords = len(w2i)
 print(nwords)
 print(com_types)
 
+def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
+                      max_iter=100, power=0.9):
+    """Polynomial decay of learning rate
+        :param init_lr is base learning rate
+        :param iter is a current iteration
+        :param lr_decay_iter how frequently decay occurs, default is 1
+        :param max_iter is number of maximum iterations
+        :param power is a polymomial power
 
+    """
+    if iter % lr_decay_iter or iter > max_iter:
+        return optimizer
+
+    lr = init_lr*(1 - iter/max_iter)**power
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+    return
 
 class DeepCBOW(nn.Module):
-  def __init__(self, vocab_size, embedding_dim, img_feat_dim, hidden_dim,  output_dim):
+  def __init__(self, vocab_size, embedding_dim, img_feat_dim, hidden_dim,  output_dim, PAD):
     super(DeepCBOW, self).__init__()
-    self.embeddings = nn.Embedding(vocab_size, embedding_dim)
+    self.embeddings = nn.Embedding(vocab_size, embedding_dim, padding_idx=PAD)
     self.linear1 = nn.Linear((embedding_dim+img_feat_dim),hidden_dim)
     self.linear2 = nn.Linear(hidden_dim,output_dim)
 
@@ -140,28 +155,23 @@ class DeepCBOW(nn.Module):
 
       emb_feat = torch.cat((embeds,img_feat),2)
       #---------------------------------                  
-      h = F.relu(self.linear1(emb_feat))
+      h = self.linear1(emb_feat)
+      h = F.relu(h)
       h = self.linear2(h)
       # ---------------------------------
          
       return h
 
 
-model = DeepCBOW(nwords, 300, 2048, 64, 1)
+model = DeepCBOW(nwords, 300, 2048, 64, 1, PAD)
+
 if CUDA:
   model.cuda()
 
-if args.lr_type =="same":
-  lr_ = args.lr_rate
-  optimizer = optim.Adam(model.parameters(), lr=lr_)
+lr_ = args.lr_rate
+optimizer = optim.Adam(model.parameters(), lr=lr_, weight_decay = 0.0001)
 
-else:
-  lr_ = args.lr_rate
-  optimizer = optim.Adam([{'params': model.embeddings.parameters(),'lr': lr_*10},{'params':model.linear1.parameters()},{'params':model.linear2.parameters()}], lr=lr_)
-
-
-
-def minibatch(data, batch_size=32):
+def minibatch(data, batch_size=128):
    for i in range(0, len(data), batch_size):
         yield data[i:i+batch_size]
 
@@ -194,13 +204,14 @@ def preprocess(batch):
     return seqs, img_feat, tags
 
 def evaluate(model, data):
+    model.eval()
     """Evaluate a model on a data set."""
     correct = 0.0
     val_loss = 0.0
     updates = 0
     correct_k = 0
 
-    for batch in minibatch(data):
+    for batch in minibatch(data, batch_size = 32):
 
           updates+=1
           
@@ -242,7 +253,7 @@ best_val_loss = None
 # ---------------------------------
 #model_file_name
 # ----------------------------------
-name_ = str(args.type)+"_"+str(args.lr_type)+"_"+com_types
+name_ = str(args.type)+"_"+com_types
 model_file = name_+".pt"
 # ----------------------------------
 
@@ -255,7 +266,7 @@ try:
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 40
+    n_epochs = 50
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
 
@@ -264,7 +275,14 @@ try:
         start = time.time()
         count = 0
         updates = 0
-        for batch in minibatch(train[0:10000]):
+        
+        # ----------------------------
+        # Update learning rate
+        # ----------------------------
+        poly_lr_scheduler(optimizer, lr_, ITER, lr_decay_iter=1, max_iter=n_epochs, power=0.9)
+        
+
+        for batch in minibatch(train, batch_size=64):
          
             updates += 1
 
@@ -329,5 +347,5 @@ metric_['test_top1_acc'].append(test_acc_1)
 metric_['test_top5_acc'].append(test_acc_k)
 
 # ---------------------------------------
-with open(os.path.join(fld,'seq_'+name_+'.json'), 'w') as outfile:  
+with open(os.path.join(fld,name_+'.json'), 'w') as outfile:  
     json.dump(metric_, outfile, indent=4)

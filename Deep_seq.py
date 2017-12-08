@@ -13,12 +13,14 @@ import torch.optim as optim
 import random
 import time
 from collections import namedtuple
+import torch.autograd as autograd
 
 
 # ----------------------
 #Add CUDA 
 # ---------------------
 CUDA = torch.cuda.is_available()
+# CUDA = False
 print("CUDA: %s" % CUDA)
 # ------------------------
 
@@ -48,15 +50,15 @@ def get_args():
     parser.add_argument(
         '--caption', type=int, help='consider caption only', default=0)
     parser.add_argument(
+        '--combine', type=int, help='combine both dialog and caption', default=0)
+    parser.add_argument(
         '--path_folder', type=str, help='path of folder containing data', default="data/VQA_IR_data")
     parser.add_argument(
         '--type', type=str, help='Easy or Hard', default="Easy")
     parser.add_argument(
         '--img_feat', help='folder to image features', default="data/img_feat")
     parser.add_argument(
-        '--lr_type', help='single or diff', default="single")
-    parser.add_argument(
-        '--lr_rate', type=float, help='initial learning rate', default=0.001)
+        '--lr_rate', type=float, help='initial learning rate', default=0.01)
 
     # Array for all arguments passed to script
     args = parser.parse_args()
@@ -127,54 +129,89 @@ nwords = len(w2i)
 # print()
 # print(nwords)
 
+def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
+                      max_iter=100, power=0.9):
+    """Polynomial decay of learning rate
+        :param init_lr is base learning rate
+        :param iter is a current iteration
+        :param lr_decay_iter how frequently decay occurs, default is 1
+        :param max_iter is number of maximum iterations
+        :param power is a polymomial power
 
+    """
+    if iter % lr_decay_iter or iter > max_iter:
+        return optimizer
+
+    lr = init_lr*(1 - iter/max_iter)**power
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+
+    return
 
 #LSTM class
 class DeepSeq(nn.Module):
-  def __init__(self, vocab_size, embed_size, img_feat_dim, hidden_dim_mlp, hidden_dim_lstm, num_layers_lstm,  output_dim):
+  def __init__(self, vocab_size, embed_size, img_feat_dim, hidden_dim_mlp, hidden_dim_lstm, num_layers_lstm,  output_dim, PAD):
     super(DeepSeq, self).__init__()
-    self.embeddings = nn.Embedding(vocab_size, embed_size)
-    self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm, batch_first=True)
+    self.hidden_dim_lstm = hidden_dim_lstm
+    self.embeddings = nn.Embedding(vocab_size, embed_size, padding_idx = PAD)
+    self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm,  batch_first=True)
+    # self.hidden = None
 
     self.linear1 = nn.Linear((hidden_dim_lstm+img_feat_dim),hidden_dim_mlp)
     self.linear2 = nn.Linear(hidden_dim_mlp,output_dim)
 
-  def forward(self, inputs, img_feat):
+  # def init_hidden(self,batch):
+  #       # Before we've done anything, we dont have any hidden state.
+  #       # Refer to the Pytorch documentation to see exactly
+  #       # why they have this dimensionality.
+  #       # The axes semantics are (num_layers, minibatch_size, hidden_dim)
+  #       return (autograd.Variable(torch.randn(1, batch, self.hidden_dim_lstm).cuda()),
+  #               autograd.Variable(torch.randn(1, batch, self.hidden_dim_lstm)).cuda())
+
+  def forward(self, inputs, img_feat, ori_seq_len):
       #-----------------------------------------------
       embeds = self.embeddings(inputs)
-      _, (hidden_state ,_) = self.lstm(embeds)
+
+      c0 = autograd.Variable(torch.zeros(1, embeds.size(0), self.hidden_dim_lstm)).cuda()  
+      h0 = autograd.Variable(torch.zeros(1, embeds.size(0), self.hidden_dim_lstm)).cuda()
+
+      out_, state_ = self.lstm(embeds, (h0, c0))
+      # hidden_state  = state_[0]
+      # print(hidden_state.size())
       
       #--------------------------------------------------
       #shape of hidden_state(num_layers, batch_size, hidden_dims)
       #------------------------------------------------------------
       
-      hidden_state = hidden_state[0]#get batch_size and hidden_dims
+      hidden_state = torch.gather(out_, 1, ori_seq_len.view(-1,1,1).expand(ori_seq_len.size(0),1,self.hidden_dim_lstm)-1)
+      hidden_state = hidden_state.squeeze(1)
+      
+      # hidden_state = hidden_state[0]#get batch_size and hidden_dims
       hidden_state = hidden_state.unsqueeze(-1)
       hidden_state  = hidden_state.transpose(1,2)
       hidden_state  = hidden_state.repeat(1,10,1)
       hidden_state = torch.cat((hidden_state,img_feat),2)
-      
-      #---------------------------------                  
-      h = F.relu(self.linear1(hidden_state))
+
+      # print(hidden_state.size())
+      #---------------------------------    
+      h = self.linear1(hidden_state)
+      # h = F.dropout(h, p = 0.5, training = self.training)
+      h = F.relu(h)
       h = self.linear2(h)
-      #---------------------------------
+      # ---------------------------------
       
          
-      return h
+      return h  
 
 
-model = DeepSeq(nwords, 300, 2048, 32, 100, 1, 1)
+model = DeepSeq(nwords, 300, 2048, 64, 512, 1, 1, PAD)
+print(model)
+
 if CUDA:
     model.cuda()
 
-if args.lr_type =="single":
-  lr_ = args.lr_rate
-  optimizer = optim.Adam(model.parameters(), lr=lr_)
-
-else:
-  lr_ = args.lr_rate
-  optimizer = optim.Adam([{'params': model.embeddings.parameters(),'lr': lr_*10},{'params':model.linear1.parameters()},{'params':model.linear2.parameters()}], lr=lr_)
-
+lr_ = args.lr_rate
+optimizer = optim.Adam(model.parameters(), lr=lr_, weight_decay = 0.0001)
 
 
 def minibatch(data, batch_size=32):
@@ -194,9 +231,9 @@ def preprocess(batch):
 
     # add zero-padding to make all sequences equally long
     seqs = [example.word for example in batch]
+    len_seqs = [len(example.word) for example in batch]
     max_length = max(map(len, seqs))
     seqs = [seq + [PAD] * (max_length - len(seq)) for seq in seqs]
-
     # --------------------------------------------
     # Load Image Features
     # --------------------------------------------
@@ -207,25 +244,27 @@ def preprocess(batch):
     
     tags = [example.img_ind for example in batch]
 
-    return seqs, img_feat, tags
+    return seqs, img_feat, tags, len_seqs
 
 def evaluate(model, data):
+
+    model.eval()
     """Evaluate a model on a data set."""
     correct = 0.0
     val_loss = 0.0
     updates = 0
     correct_k = 0
-
-    for batch in minibatch(data):
+    # print("evalution")
+    for batch in minibatch(data[0:1000], batch_size = 64):
 
 
           updates+=1
           
           # pad data with zeros
-          seqs, img_feat, target_ind = preprocess(batch)
+          seqs, img_feat, target_ind, ori_seq_len = preprocess(batch)
 
           # forward pass
-          scores = model(get_tensor([seqs])[0], Variable(img_feat))
+          scores = model(get_tensor([seqs])[0], Variable(img_feat), get_tensor(ori_seq_len))
           
           #calculating loss for validation set
           scores = scores[:,:,0]
@@ -255,12 +294,11 @@ def get_tensor(x):
     return Variable(tensor)
 
 
-best_val_loss = None
 
 # ---------------------------------
 #model_file_name
 # ----------------------------------
-name_ = str(args.type)+"_"+str(args.lr_type)+"_"+com_types
+name_ = str(args.type)+"_"+com_types
 model_file = name_+".pt"
 # ----------------------------------
 
@@ -270,12 +308,13 @@ model_file = name_+".pt"
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:
+    best_val_loss = None
   # ---------------------------------------------
   #To store evaluation
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 40
+    n_epochs = 50
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
 
@@ -284,14 +323,20 @@ try:
         start = time.time()
         count = 0
         updates = 0
-        for batch in minibatch(train):
-                    
+        # ----------------------------
+        # Update learning rate
+        # ----------------------------
+        poly_lr_scheduler(optimizer, lr_, ITER, lr_decay_iter=1, max_iter=n_epochs, power=0.9)
+
+        for batch in minibatch(train[0:1000], batch_size=128):
             updates += 1
+            
 
             # pad data with zeros
-            seqs, img_feat, target_ind = preprocess(batch)
+            seqs, img_feat, target_ind, ori_seq_len = preprocess(batch)
 
-            scores = model(get_tensor([seqs])[0], Variable(img_feat))
+          # forward pass
+            scores = model(get_tensor([seqs])[0], Variable(img_feat), get_tensor(ori_seq_len))
            
 
             loss = nn.CrossEntropyLoss()
@@ -299,7 +344,6 @@ try:
             output = loss(scores[:,:,0], targets[0])
             # print(output)
             train_loss += output.data[0]
-
 
             # backward pass
             model.zero_grad()
@@ -327,7 +371,7 @@ try:
 
         if not best_val_loss or val_loss < best_val_loss:
               best_val_loss = val_loss
-              with open(model_file, 'wb') as f:
+              with open(os.path.join(fld, model_file), 'wb') as f:
                     torch.save(model, f)
 except KeyboardInterrupt:
       print('-' * 89)
@@ -335,7 +379,7 @@ except KeyboardInterrupt:
 
 
 # Load the best saved model.
-with open(model_file, 'rb') as f:
+with open(os.path.join(fld, model_file), 'rb') as f:
     model = torch.load(f)
 
 #----------------------------------------------------
@@ -355,5 +399,5 @@ metric_['test_top1_acc'].append(test_acc_1)
 metric_['test_top5_acc'].append(test_acc_k)
 
 # ---------------------------------------
-with open(os.path.join(fld,'seq_'+name_+'.json'), 'w') as outfile:  
+with open(os.path.join(fld,name_+'.json'), 'w') as outfile:  
     json.dump(metric_, outfile, indent=4)
