@@ -119,24 +119,24 @@ nwords = len(w2i)
 print(nwords)
 print(com_types)
 
-def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
-                      max_iter=100, power=0.9):
-    """Polynomial decay of learning rate
-        :param init_lr is base learning rate
-        :param iter is a current iteration
-        :param lr_decay_iter how frequently decay occurs, default is 1
-        :param max_iter is number of maximum iterations
-        :param power is a polymomial power
+# def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
+#                       max_iter=100, power=0.9):
+#     """Polynomial decay of learning rate
+#         :param init_lr is base learning rate
+#         :param iter is a current iteration
+#         :param lr_decay_iter how frequently decay occurs, default is 1
+#         :param max_iter is number of maximum iterations
+#         :param power is a polymomial power
 
-    """
-    if iter % lr_decay_iter or iter > max_iter:
-        return optimizer
+#     """
+#     if iter % lr_decay_iter or iter > max_iter:
+#         return optimizer
 
-    lr = init_lr*(1 - iter/max_iter)**power
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+#     lr = init_lr*(1 - iter/max_iter)**power
+#     for param_group in optimizer.param_groups:
+#         param_group['lr'] = lr
 
-    return
+#     return
 
 class DeepCBOW(nn.Module):
   def __init__(self, vocab_size, embedding_dim, img_feat_dim, hidden_dim,  output_dim, PAD):
@@ -257,7 +257,11 @@ name_ = str(args.type)+"_"+com_types
 model_file = name_+".pt"
 # ----------------------------------
 
-
+def adjust_learning_rate(optimizer, epoch):
+        """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+        lr = lr_ * (0.1 ** (epoch // 10))
+        for param_group in optimizer.param_groups:
+             param_group['lr'] = lr
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:
@@ -279,8 +283,7 @@ try:
         # ----------------------------
         # Update learning rate
         # ----------------------------
-        poly_lr_scheduler(optimizer, lr_, ITER, lr_decay_iter=1, max_iter=n_epochs, power=0.9)
-        
+        adjust_learning_rate(optimizer, ITER)
 
         for batch in minibatch(train, batch_size=64):
          
