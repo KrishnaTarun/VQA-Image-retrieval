@@ -1,6 +1,6 @@
 import json
 import os
-from collections import defaultdict
+from collections import defaultdict, Counter
 import argparse
 import h5py
 import glob
@@ -12,11 +12,14 @@ import torch.nn.functional as F
 import torch.optim as optim
 import random
 import time
+import preprocess as ps
+
 
 # Functions to read in the corpus
 w2i = defaultdict(lambda: len(w2i))
 t2i = defaultdict(lambda: len(t2i))
 UNK = w2i["<unk>"]
+count = Counter()
 
 torch.manual_seed(1)
 random.seed(1)
@@ -33,7 +36,7 @@ def get_args():
     parser.add_argument(
         '--caption', type=int, help='consider caption only', default=0)
     parser.add_argument(
-        '--combine', type=int, help='combine both dialog and caption', default=0)
+        '--combine', type=int, help='combine both dialog and caption', default=1)
     parser.add_argument(
         '--path_folder', type=str, help='path of folder containing data', default="data/VQA_IR_data")
     parser.add_argument(
@@ -49,41 +52,44 @@ def get_args():
 
 def read_dataset(process):
 
-   
+
    #data file path
    fld_path = os.path.join(args.path_folder,args.type)
    filename = 'IR_'+process+'_'+args.type.lower()
 
    print(fld_path,filename)
-    #data 
+    #data
    with open(os.path.join(fld_path,filename+'.json')) as json_data:
         data = json.load(json_data)
-   
+
    for key, val in data.items():
         word_d, word_c, img_list, target_ind, img_id   = val['dialog'], val['caption'], val['img_list'], val['target'], val['target_img_id']
         stack_d=[]
-        if len(img_list)==10:  
+        if len(img_list)==10:
             for i, sen in enumerate(word_d):
-                sen = sen[0].lower().strip().split(" ")
+                sen = ps.preprocess_sen(sen[0])
                 stack_d += sen
-            word_c = word_c.lower().strip().split(" ")
+            word_c = ps.preprocess_sen(word_c)
             if args.dialog:
-                
+                for i in stack_d:
+                    count[i] += 1
                 yield([w2i[x] for x in stack_d],img_list,target_ind,img_id)
 
             if args.caption:
-                
+                for i in stack_d:
+                    count[i] += 1
                 yield([w2i[x] for x in word_c],img_list,target_ind,img_id)
-            
+
             if args.combine:
-               
                word = stack_d+word_c
+               for i in word:
+                   count[i] += 1
                yield([w2i[x] for x in word],img_list,target_ind,img_id)
 
 
 
 args = get_args()
-   
+
 #Loading img_features
 path_to_h5_file = glob.glob(args.img_feat+"/*.h5")[0]
 img_features = np.asarray(h5py.File(path_to_h5_file, 'r')['img_features'])
@@ -95,6 +101,20 @@ with open(path_to_json_file, 'r') as f:
 
 
 train = list(read_dataset('train'))
+
+f = open("Count.txt","w")
+f.write(str(count))
+f.close()
+print("Started")
+f = open("W2I-1.txt","w")
+f.write(str(w2i))
+f.close()
+w2i = ps.filter_words(w2i,count)
+f = open("W2I-2.txt","w")
+f.write(str(w2i))
+f.close()
+print("Ended")
+
 w2i = defaultdict(lambda: UNK, w2i)
 val = list(read_dataset('val'))
 nwords = len(w2i)
@@ -114,14 +134,14 @@ class DeepCBOW(nn.Module):
       embeds = self.embeddings(inputs)
       embeds = torch.sum(embeds, 1)
       embeds  = embeds.repeat(10,1)
-      
+
       emb_feat = torch.cat((embeds,img_feat),1)
-      #---------------------------------                  
+      #---------------------------------
       h = F.tanh(self.linear1(emb_feat))
       h = self.linear2(h)
       #---------------------------------
-         
-      
+
+
       return h.transpose(0,1)
 
 
@@ -133,23 +153,23 @@ model = DeepCBOW(nwords, img_list, 300, 2048, 64, 1)
 
 #get matrix of features given a image_list
 def get_img_feat(image_list):
-  
+
    img_m = [img_features[visual_feat_mapping[str(i)]] for i in image_list]
 
    img_m = torch.from_numpy(np.array(img_m))
-   
+
    return Variable(torch.FloatTensor(img_m))
 
 
 def evaluate(model, data):
     """Evaluate a model on a data set."""
     correct = 0.0
-    
+
     for words, img_list, target_ind, img_id  in data:
         # forward pass
 
         scores = model(get_tensor([words]), get_img_feat(img_list))
-        
+
         predict = scores.data.numpy().argmax(axis=1)[0]
 
         if predict == target_ind:
@@ -168,14 +188,14 @@ print("training")
 for ITER in range(10):
     print(ITER)
 
-    random.shuffle(train)
+    random.shuffle(train[0:10000])
     train_loss = 0.0
     start = time.time()
     count = 0
     for words, img_list, target_ind, img_id in train[0:100]:
         print(count)
         print(img_list)
-        
+
         # forward pass
         scores = model(get_tensor([words]), get_img_feat(img_list))
 
