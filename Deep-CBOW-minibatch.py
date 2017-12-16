@@ -52,7 +52,7 @@ def get_args():
     parser.add_argument(
         '--img_feat', help='folder to image features', default="data/img_feat")
     parser.add_argument(
-        '--lr_rate', type=float, help='initial learning rate', default=0.01)
+        '--lr_rate', type=float, help='initial learning rate', default=0.001)
 
     # Array for all arguments passed to script
     args = parser.parse_args()
@@ -116,8 +116,7 @@ train = list(read_dataset('train'))
 w2i = defaultdict(lambda: UNK, w2i)
 val = list(read_dataset('val'))
 nwords = len(w2i)
-print(nwords)
-print(com_types)
+
 
 # def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
 #                       max_iter=100, power=0.9):
@@ -152,11 +151,11 @@ class DeepCBOW(nn.Module):
       embeds = embeds.unsqueeze(-1)
       embeds  = embeds.transpose(1,2)
       embeds  = embeds.repeat(1,10,1)
-
+      
       emb_feat = torch.cat((embeds,img_feat),2)
       #---------------------------------                  
       h = self.linear1(emb_feat)
-      h = F.relu(h)
+      h = F.tanh(h)
       h = self.linear2(h)
       # ---------------------------------
          
@@ -164,6 +163,7 @@ class DeepCBOW(nn.Module):
 
 
 model = DeepCBOW(nwords, 300, 2048, 64, 1, PAD)
+print(model)
 
 if CUDA:
   model.cuda()
@@ -259,18 +259,19 @@ model_file = name_+".pt"
 
 def adjust_learning_rate(optimizer, epoch):
         """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-        lr = lr_ * (0.1 ** (epoch // 10))
+        lr = lr_ * (0.1 ** (epoch // 15))
         for param_group in optimizer.param_groups:
              param_group['lr'] = lr
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:
+    print(len(train))
 # ---------------------------------------------
   #To store evaluation
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 50
+    n_epochs = 40
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
 
@@ -285,7 +286,7 @@ try:
         # ----------------------------
         adjust_learning_rate(optimizer, ITER)
 
-        for batch in minibatch(train, batch_size=64):
+        for batch in minibatch(train, batch_size=128):
          
             updates += 1
 

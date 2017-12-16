@@ -14,7 +14,7 @@ import random
 import time
 from collections import namedtuple
 import torch.autograd as autograd
-
+import preprocess as ps
 
 # ----------------------
 #Add CUDA 
@@ -34,6 +34,7 @@ if not os.path.isdir(fld):
 w2i = defaultdict(lambda: len(w2i))
 UNK = w2i["<unk>"]
 PAD = w2i["<pad>"]
+# count = Counter()
 
 
 
@@ -122,7 +123,7 @@ class DeepSeq(nn.Module):
     
     self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm, dropout= 0.5, batch_first=True)
     self.linear_I = nn.Linear(img_feat_dim, hidden_dim_lstm)
-    self.linear1 = nn.Linear(hidden_dim_lstm,embed_size)
+    self.linear1 = nn.Linear(2048,embed_size)
     # self.linear2 = nn.Linear(hidden_dim_mlp, output_dim)
 
 
@@ -153,12 +154,13 @@ class DeepSeq(nn.Module):
       # transform 2048 into 1024 and take element wise multiplication
       I = self.linear_I(img_feat)
       I = F.tanh(I)
-      h = hidden_state * I
+      h = torch.cat((hidden_state,I),2)
+      # h = hidden_state * I
       # #---------------------------------
       h = self.linear1(h)
       h = F.tanh(h)
-      # calculate dot product of d_embeds with h
       h = torch.sum(d_embeds*h,2)
+      # calculate dot product of d_embeds with h
 
          
       return h  
@@ -171,7 +173,7 @@ if CUDA:
     model.cuda()
 
 lr_ = args.lr_rate
-optimizer = optim.Adam(model.parameters(), lr=lr_, weight_decay = 0.0001)
+optimizer = optim.SGD(model.parameters(), lr=lr_,  momentum=0.9, nesterov=True, weight_decay = 0.0001)
 
 
 def minibatch(data, batch_size=32):
@@ -274,7 +276,10 @@ def get_tensor(x):
 
 def adjust_learning_rate(optimizer, epoch):
         """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-        lr = lr_ * (0.1 ** (epoch // 20))
+        # if epoch<=7:
+        #    lr = lr_ * (0.1 ** (epoch // 7))
+        # else:
+        lr = lr_ * (0.1 ** (epoch // 10))
         for param_group in optimizer.param_groups:
              param_group['lr'] = lr
         return lr
@@ -298,7 +303,7 @@ try:
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 4
+    n_epochs = 20
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
 
@@ -311,7 +316,7 @@ try:
         updates = 0
         
 
-        for batch in minibatch(train[0:1000], batch_size=32):
+        for batch in minibatch(train, batch_size=96):
             updates += 1
             
 

@@ -58,7 +58,7 @@ def get_args():
     parser.add_argument(
         '--img_feat', help='folder to image features', default="data/img_feat")
     parser.add_argument(
-        '--lr_rate', type=float, help='initial learning rate', default=0.01)
+        '--lr_rate', type=float, help='initial learning rate', default=0.001)
 
     # Array for all arguments passed to script
     args = parser.parse_args()
@@ -96,6 +96,11 @@ def read_dataset(process,w2i):
                 
                 com_types = "caption"
                 yield Example(word=[w2i[x] for x in word_c],img_list=img_list, img_ind = target_ind, img_id =img_id)
+            if args.combine:
+               
+               word = stack_d+word_c
+               com_types = "combine"
+               yield Example(word=[w2i[x] for x in word],img_list=img_list, img_ind = target_ind, img_id =img_id)
 
 
 
@@ -129,24 +134,24 @@ nwords = len(w2i)
 # print()
 # print(nwords)
 
-def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
-                      max_iter=100, power=0.9):
-    """Polynomial decay of learning rate
-        :param init_lr is base learning rate
-        :param iter is a current iteration
-        :param lr_decay_iter how frequently decay occurs, default is 1
-        :param max_iter is number of maximum iterations
-        :param power is a polymomial power
+# def poly_lr_scheduler(optimizer, init_lr, iter, lr_decay_iter=1,
+#                       max_iter=100, power=0.9):
+#     """Polynomial decay of learning rate
+#         :param init_lr is base learning rate
+#         :param iter is a current iteration
+#         :param lr_decay_iter how frequently decay occurs, default is 1
+#         :param max_iter is number of maximum iterations
+#         :param power is a polymomial power
 
-    """
-    if iter % lr_decay_iter or iter > max_iter:
-        return optimizer
+#     """
+#     if iter % lr_decay_iter or iter > max_iter:
+#         return optimizer
 
-    lr = init_lr*(1 - iter/max_iter)**power
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+#     lr = init_lr*(1 - iter/max_iter)**power
+#     for param_group in optimizer.param_groups:
+#         param_group['lr'] = lr
 
-    return
+#     return
 
 #LSTM class
 class DeepSeq(nn.Module):
@@ -155,9 +160,10 @@ class DeepSeq(nn.Module):
     self.hidden_dim_lstm = hidden_dim_lstm
     self.embeddings = nn.Embedding(vocab_size, embed_size, padding_idx = PAD)
     
-    self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm, dropout=0.5, batch_first=True)
+    self.lstm = nn.LSTM(embed_size, hidden_dim_lstm, num_layers_lstm, dropout=.5, batch_first=True)
     self.linear1 = nn.Linear((hidden_dim_lstm+img_feat_dim),hidden_dim_mlp)
     self.linear2 = nn.Linear(hidden_dim_mlp, output_dim)
+
 
   
   def forward(self, inputs, img_feat, ori_seq_len):
@@ -273,8 +279,12 @@ def get_tensor(x):
     tensor =  torch.cuda.LongTensor(x) if CUDA else torch.LongTensor(x)
     return Variable(tensor)
 
-
-
+def adjust_learning_rate(optimizer, epoch):
+        """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
+        lr = lr_ * (0.1 ** (epoch // 14))
+        for param_group in optimizer.param_groups:
+             param_group['lr'] = lr
+        return lr
 # ---------------------------------
 #model_file_name
 # ----------------------------------
@@ -283,32 +293,32 @@ model_file = name_+".pt"
 # ----------------------------------
 
 
-
+print(len(train))
 
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:
+    
     best_val_loss = None
   # ---------------------------------------------
   #To store evaluation
   # ---------------------------------------------
     metric_ = defaultdict(list)
     metric_["folder"] = fld
-    n_epochs = 10
+    n_epochs = 30
     metric_['n_epochs'].append(n_epochs)
     for ITER in range(n_epochs ):
+
+        lr=adjust_learning_rate(optimizer, ITER)
 
         random.shuffle(train)
         train_loss = 0.0
         start = time.time()
         count = 0
         updates = 0
-        # ----------------------------
-        # Update learning rate
-        # ----------------------------
-        # poly_lr_scheduler(optimizer, lr_, ITER, lr_decay_iter=1, max_iter=n_epochs, power=0.9)
+        
 
-        for batch in minibatch(train[0:10000], batch_size=128):
+        for batch in minibatch(train, batch_size=128):
             updates += 1
             
 
@@ -327,6 +337,10 @@ try:
             # backward pass
             model.zero_grad()
             output.backward()
+            # # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
+            # torch.nn.utils.clip_grad_norm(model.parameters(), 0.15)
+            # for p in model.parameters():
+            #     p.data.add_(-lr, p.grad.data)
 
             # update weights
             optimizer.step()
@@ -357,26 +371,26 @@ except KeyboardInterrupt:
       print('Exiting from training early')
 
 
-# # Load the best saved model.
-# with open(os.path.join(fld, model_file), 'rb') as f:
-#     model = torch.load(f)
+# Load the best saved model.
+with open(os.path.join(fld, model_file), 'rb') as f:
+    model = torch.load(f)
 
-# #----------------------------------------------------
-# # Load test data for evaluation
-# #---------------------------------------------------- 
-# test = list(read_dataset('test',w2i))
+#----------------------------------------------------
+# Load test data for evaluation
+#---------------------------------------------------- 
+test = list(read_dataset('test',w2i))
 
-# # Run on test data.
-# test_loss = evaluate(model, test)
-# print('=' * 89)
-# _, _, _, test_acc_1, test_acc_k, test_loss = evaluate(model, test)
+# Run on test data.
+test_loss = evaluate(model, test)
+print('=' * 89)
+_, _, _, test_acc_1, test_acc_k, test_loss = evaluate(model, test)
 
-# print("test top_1 acc=%.4f test top_5 acc=%.4f test_loss=%.4f" % (test_acc_1, test_acc_k, test_loss))
+print("test top_1 acc=%.4f test top_5 acc=%.4f test_loss=%.4f" % (test_acc_1, test_acc_k, test_loss))
 
-# metric_['test_loss'].append(test_loss)
-# metric_['test_top1_acc'].append(test_acc_1)
-# metric_['test_top5_acc'].append(test_acc_k)
+metric_['test_loss'].append(test_loss)
+metric_['test_top1_acc'].append(test_acc_1)
+metric_['test_top5_acc'].append(test_acc_k)
 
-# # ---------------------------------------
-# with open(os.path.join(fld,name_+'.json'), 'w') as outfile:  
-#     json.dump(metric_, outfile, indent=4)
+# ---------------------------------------
+with open(os.path.join(fld,name_+'.json'), 'w') as outfile:  
+    json.dump(metric_, outfile, indent=4)
